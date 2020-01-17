@@ -1,0 +1,105 @@
+version: '3'
+networks:
+  backend:
+    driver: ${NETWORKS_DRIVER}
+volumes:
+  postgres:
+    driver: ${VOLUMES_DRIVER}
+services:
+  elasticsearch:
+    image: elasticsearch:7.5.1
+    ports: 
+      - 9200:9200
+      - 9300:9300
+    environment: 
+      - discovery.type=single-node
+    networks: 
+      - backend
+  gitea:
+    image: gitea/gitea
+    volumes: 
+      - ./data/gitea:/data
+    ports: 
+      - 3000:3000
+      - 22:22
+    depends_on: 
+      - db
+    restart: always
+  db:
+    image: mariadb:10
+    restart: always
+    environment: 
+      - MYSQL_ROOT_PASSWORD=changeme
+      - MYSQL_DATABASE=gitea
+      - MYSQL_USER=gitea
+      - MYSQL_PASSWORD=changeme
+    volumes:
+      - ./data/db/:/var/lib/mysql
+  rabbitmq:
+    image: rabbitmq:3
+    environment: 
+      - RABBITMQ_ERLANG_COOKIE=${DB_REDIS_PASSWORD}
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS}
+    ports:
+      - ${RABBITMQ_MANAGEMENT_HTTP_HOST_PORT}:15672
+      - ${RABBITMQ_NODE_HOST_PORT}:5672
+  redis:
+    image: redis:alpine
+    command: "redis-server --requirepass ${DB_REDIS_PASSWORD}"
+    networks:
+      - backend
+  postgres:
+    build:
+      context: ./images/postgres-postgis
+      args:
+        - PG_VERSION=10
+    volumes:
+      - ${DATA_PATH_HOST}/postgres:/var/lib/postgresql/data
+    ports:
+      - "${DB_POSTGRES_PORT}:5432"
+    environment:
+      - POSTGRES_DB=${DB_POSTGRES_DATABASE}
+      - POSTGRES_USER=${DB_POSTGRES_USERNAME}
+      - POSTGRES_PASSWORD=${DB_POSTGRES_PASSWORD}
+    networks:
+      - backend
+  adminer: 
+    image: adminer
+    restart: always
+    ports:
+      - 8080:8080
+    networks: 
+      - backend
+  verdaccio:
+    image: verdaccio/verdaccio:4
+    ports:
+      - 4873:4873
+    volumes: 
+      - ./data/storage:/verdaccio/storage
+  drone-server:
+    image: drone/drone
+    ports:
+      - 80:80
+    volumes:
+      - /var/lib/drone:/var/lib/drone/
+    restart: always
+    environment:
+      - DRONE_OPEN=true
+      - DOCKER_API_VERSION=1.40
+      - DRONE_HOST=10.0.1.25
+      - DRONE_GITEA=true
+      - DRONE_GITEA_URL=http://10.0.1.25:3000/   # 代码仓库地址
+      - DRONE_SECRET=ok
+  drone-agent:
+    image: drone/agent
+    command: agent
+    restart: always
+    depends_on:
+      - drone-server
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - DOCKER_API_VERSION=1.40
+      - DRONE_SERVER=ws://drone-server:80/ws/broker
+      - DRONE_SECRET=ok
